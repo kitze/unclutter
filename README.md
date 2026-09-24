@@ -100,7 +100,7 @@ WXT browser extension: Jev\-powered page clutter removal with reusable template 
 
 # Unclutter
 
-WXT extension for Chrome / Chromium and Firefox. Jev classifies nonessential page elements through Vercel AI Gateway or TypeSafe AI directly; the extension stores and reapplies local hiding rules by page template.
+WXT extension for Chrome / Chromium and Firefox. Jev classifies nonessential page elements through Vercel AI Gateway, OpenRouter, or TypeSafe AI directly; the extension stores and reapplies local hiding rules by page template.
 
 ## Install from source
 
@@ -117,18 +117,18 @@ bun run build
 2. Turn on **Developer mode**.
 3. Click **Load unpacked** and select `.output/chrome-mv3` inside the cloned repository.
 4. Pin Unclutter, refresh any already-open website, then open its popup.
-5. Under **Connection**, choose **Vercel AI Gateway** or **TypeSafe AI**, paste the matching API key, and save it.
+5. Under **Connection**, choose **Vercel AI Gateway**, **TypeSafe AI**, or **OpenRouter**, paste the matching API key, and save it.
 6. Choose **Manual** (default) and click **Analyze page**, or select **On page visit**. Your selected provider must have credits / Jev access.
 
 After replacing unpacked builds, click **Reload** on the extension card and refresh website tabs. Existing keys/settings stay in place. V1 templates show **Update available**; **Re-analyze** once to include cookie dialogs, or automatic mode upgrades them once while preserving paused templates and keep-visible choices.
 
 For Firefox 140+, run `bun run build:firefox`, open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select `.output/firefox-mv2/manifest.json`. Temporary add-ons disappear on Firefox restart; permanent Firefox distribution requires Mozilla signing. Chrome/Edge/Brave can use the Chromium build. Safari packaging is not included.
 
-Bring your own [Vercel AI Gateway](https://vercel.com/ai-gateway) key or [TypeSafe AI key](https://console.typesafe.ai/settings/keys) (the same kind used as `JEV_KEY` / `TYPESAFE_API_KEY`). Configure it in the extension popup, not in source code or build-time environment variables. No key or shared account is bundled.
+Bring your own [Vercel AI Gateway](https://vercel.com/ai-gateway) key, [OpenRouter key](https://openrouter.ai/settings/keys), or [TypeSafe AI key](https://console.typesafe.ai/settings/keys) (the same kind used as `JEV_KEY` / `TYPESAFE_API_KEY`). Configure it in the extension popup, not in source code or build-time environment variables. No key or shared account is bundled.
 
 **One key is stored.** Switching the provider persists immediately and reuses that key for the next analysis; paste a matching key if the providers use different credentials. Saving a key saves the selected provider with it. Removing the key does not reset the provider. Existing installations without a provider setting default to Gateway. Saved templates remain usable offline regardless of provider.
 
-TypeSafe direct uses `POST https://api.typesafe.ai/v1/systemone`, Bearer authentication, and body model `jev-latest`. Gateway uses its evaluation-model v4 endpoint and `typesafe-ai/jev` headers. TypeSafe requests never carry Gateway protocol headers; Gateway requests never carry the TypeSafe model field.
+TypeSafe direct uses `POST https://api.typesafe.ai/v1/systemone`, Bearer authentication, and body model `jev-latest`. Gateway uses its evaluation-model v4 endpoint and `typesafe-ai/jev` headers. OpenRouter uses `POST https://openrouter.ai/api/alpha/decisions` (the [Decisions API](https://openrouter.ai/docs/guides/community/jev)), Bearer authentication, and body model `~typesafe/jev-latest`. TypeSafe and OpenRouter requests never carry Gateway protocol headers; Gateway requests never carry the TypeSafe model field.
 
 ## Behavior
 
@@ -176,11 +176,11 @@ bun run build:firefox
 
 Use `bun run dev` for WXT development mode. No background server is needed for unpacked production builds.
 
-The normal checks use synthetic fixtures and need no API key. Optional live smoke test: set `JEV_KEY` or `TYPESAFE_API_KEY` for TypeSafe AI, **or** `AI_GATEWAY_API_KEY` for Gateway, then run `bun scripts/smoke-jev.ts`. Do not set both provider families; conflicting direct-key aliases are rejected too. Never pass a key as a command-line argument. The smoke sends synthetic inputs only and incurs a small API charge. Never commit `.env` files, API keys, browser profiles, or real browsing data.
+The normal checks use synthetic fixtures and need no API key. Optional live smoke test: set `JEV_KEY` or `TYPESAFE_API_KEY` for TypeSafe AI, `AI_GATEWAY_API_KEY` for Gateway, **or** `OPENROUTER_API_KEY` for OpenRouter, then run `bun scripts/smoke-jev.ts`. Set only one provider family; conflicting direct-key aliases are rejected too. Never pass a key as a command-line argument. The smoke sends synthetic inputs only and incurs a small API charge. Never commit `.env` files, API keys, browser profiles, or real browsing data.
 
 Outputs: `.output/chrome-mv3/` and `.output/firefox-mv2/`. `bun run zip` packages Chromium.
 
-Architecture: `lib/page-context.ts` identifies templates, `lib/dom.ts` extracts candidates and applies reversible rules, `lib/jev.ts` implements Gateway evaluation-model v4 and TypeSafe System One with shared choice validation, `entrypoints/background.ts` owns credentials/cache/actions, `entrypoints/cleaner.content.ts` handles page lifecycle, and `entrypoints/popup/` provides controls. Settings and profiles use independent storage keys to avoid unrelated-tab write loss.
+Architecture: `lib/page-context.ts` identifies templates, `lib/dom.ts` extracts candidates and applies reversible rules, `lib/jev.ts` implements Gateway evaluation-model v4, TypeSafe System One and OpenRouter Decisions with shared choice validation, `entrypoints/background.ts` owns credentials/cache/actions, `entrypoints/cleaner.content.ts` handles page lifecycle, and `entrypoints/popup/` provides controls. Settings and profiles use independent storage keys to avoid unrelated-tab write loss.
 
 ## License
 
