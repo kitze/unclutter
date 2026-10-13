@@ -24,8 +24,9 @@
         </select>
       </div>
       <p id="auto-disclosure" class="disclosure" hidden>
-        On page visit automatically sends element snippets to Vercel AI Gateway for new templates.
-        Snippets may contain personal data. API charges apply. Cached templates are reused.
+        On page visit automatically sends element snippets to your selected provider for new
+        templates. Snippets may contain personal data. API charges apply. Cached templates are
+        reused.
       </p>
       <section id="page" class="page-card">
         <div class="site-line">
@@ -41,8 +42,8 @@
           ><button id="toggle" class="secondary" hidden>Pause</button>
         </div>
         <p id="disclosure" class="disclosure">
-          Analyze sends up to 60 element descriptions to Vercel AI Gateway. Main article text and
-          form values are excluded; snippets may still contain personal data.
+          Analyze sends up to 60 element descriptions to your selected provider. Main article text
+          and form values are excluded; snippets may still contain personal data.
         </p>
       </section>
       <p id="error" role="alert" hidden></p>
@@ -59,6 +60,7 @@
           ><select id="provider">
             <option value="vercel">Vercel AI Gateway</option>
             <option value="typesafe">TypeSafe AI</option>
+            <option value="openrouter">OpenRouter (Jev)</option>
           </select>
           <label for="api-key">API key</label>
           <div class="key-row">
@@ -67,7 +69,7 @@
               type="password"
               autocomplete="off"
               spellcheck="false"
-              placeholder="Paste Vercel AI Gateway key"
+              placeholder="Paste your provider API key"
             /><button type="submit" class="secondary">Save</button>
           </div>
           <p class="disclosure">
