@@ -6,10 +6,11 @@ import {
   evaluate,
   evaluationCall,
   evaluationRequest,
+  LAYA_CUTOFF,
   rulesFromAnswers,
 } from "../lib/jev";
 import type { Snapshot } from "../lib/model";
-import { resolveProvider, smokeCredentials } from "../lib/providers";
+import { isConfigured, layaEndpoint, resolveProvider, smokeCredentials } from "../lib/providers";
 
 const snapshot: Snapshot = {
   url: "https://example.com/article?token=private",
@@ -160,4 +161,97 @@ test("smoke credentials support direct aliases and reject mixed provider familie
     /differ/,
   );
   assert.throws(() => smokeCredentials({}), /Set JEV_KEY/);
+});
+
+test("Laya URLs normalize to System One and reject credentials or other schemes", () => {
+  for (const input of [
+    "http://localhost:8000",
+    "http://localhost:8000/",
+    "http://localhost:8000/v1/systemone",
+    " http://localhost:8000/?x=1#y ",
+  ])
+    assert.equal(layaEndpoint(input), "http://localhost:8000/v1/systemone");
+  assert.equal(layaEndpoint("https://ai.lan/laya/"), "https://ai.lan/laya/v1/systemone");
+  assert.throws(() => layaEndpoint("ftp://localhost:8000"), /http/);
+  assert.throws(() => layaEndpoint("http://user:pw@localhost:8000"), /key field/);
+  assert.throws(() => layaEndpoint("localhost:8000"));
+});
+
+test("Laya needs a server URL, not a key", () => {
+  assert.equal(resolveProvider("laya"), "laya");
+  const laya = { provider: "laya" as const, apiKey: "", endpoint: "http://localhost:8000" };
+  assert.equal(isConfigured(laya), true);
+  assert.equal(isConfigured({ ...laya, endpoint: "" }), false);
+  assert.equal(isConfigured({ ...laya, provider: "vercel" }), false);
+  assert.deepEqual(smokeCredentials({ LAYA_URL: "http://localhost:8000" }), {
+    provider: "laya",
+    key: "",
+    endpoint: "http://localhost:8000",
+  });
+});
+
+test("Laya cutoff uses calibrated probability and ignores Jev-style confidence", () => {
+  assert.equal(rulesFromAnswers(result(0.1, 0.6), snapshot.candidates, LAYA_CUTOFF).length, 1);
+  assert.deepEqual(rulesFromAnswers(result(0.99, 0.59), snapshot.candidates, LAYA_CUTOFF), []);
+  assert.deepEqual(rulesFromAnswers(result(0.1, 0.6), snapshot.candidates), []);
+});
+
+const layaSnapshot: Snapshot = {
+  ...snapshot,
+  candidates: [
+    snapshot.candidates[0]!,
+    { ...snapshot.candidates[0]!, id: "e1", selector: "nav.site", signals: "nav", text: "Home" },
+  ],
+};
+
+test("Laya sends one element per request, without a key unless one is saved", async (t) => {
+  const bodies: { state: { element: { signals: string } }; questions: object }[] = [];
+  const fetch = t.mock.method(globalThis, "fetch", async (url: unknown, init: RequestInit) => {
+    assert.equal(url, "http://localhost:8000/v1/systemone");
+    assert.equal(new Headers(init.headers).has("Authorization"), false);
+    const body = JSON.parse(String(init.body));
+    assert.equal(body.model, undefined);
+    bodies.push(body);
+    const [id] = Object.keys(body.questions);
+    const choice = id === "e0" ? "ad" : "keep";
+    return Response.json({
+      answers: {
+        [id!]: { type: "choice", choice, confidence: 0.2, probabilities: { [choice]: 0.7 } },
+      },
+    });
+  });
+  assert.deepEqual(await evaluate(layaSnapshot, "", "laya", "http://localhost:8000"), [
+    { selector: "div.ad-banner", category: "ad", enabled: true },
+  ]);
+  assert.equal(fetch.mock.calls.length, 2);
+  for (const body of bodies) {
+    assert.equal(Object.keys(body.questions).length, 1);
+    assert.equal(JSON.stringify(body).includes("example.com"), false);
+  }
+  assert.deepEqual(bodies.map((b) => b.state.element.signals).sort(), ["advertisement", "nav"]);
+
+  fetch.mock.mockImplementation(async (_url: unknown, init: RequestInit) => {
+    assert.equal(new Headers(init.headers).get("Authorization"), "Bearer synthetic-test-key");
+    const [id] = Object.keys(JSON.parse(String(init.body)).questions);
+    return Response.json({ answers: { [id!]: { type: "choice", choice: "keep" } } });
+  });
+  assert.deepEqual(
+    await evaluate(layaSnapshot, "synthetic-test-key", "laya", "http://localhost:8000"),
+    [],
+  );
+});
+
+test("Laya failures name the server problem and keep existing rules", async (t) => {
+  t.mock.method(globalThis, "fetch", async () => new Response("private", { status: 401 }));
+  await assert.rejects(evaluate(layaSnapshot, "", "laya", "http://localhost:8000"), {
+    message: "Laya request failed: HTTP 401. Check your Laya server key.",
+  });
+  t.mock.method(globalThis, "fetch", async () => {
+    throw new TypeError("Failed to fetch");
+  });
+  await assert.rejects(evaluate(layaSnapshot, "", "laya", "http://localhost:8000"), {
+    message: "Could not reach the Laya server at http://localhost:8000.",
+  });
+  t.mock.method(globalThis, "fetch", async () => Response.json({ answers: {} }));
+  await assert.rejects(evaluate(layaSnapshot, "", "laya", "http://localhost:8000"), /incomplete/);
 });

@@ -23,6 +23,7 @@ let tabId: number | undefined;
 let hasKey = false;
 let working = false;
 let savedProvider: Provider = "vercel";
+let endpoint = "";
 let current: (PageState & { busy: boolean; error: string | null }) | null = null;
 let poll: ReturnType<typeof setTimeout> | undefined;
 
@@ -47,14 +48,23 @@ function render() {
   toggle.textContent = current?.profile?.enabled ? "Pause" : "Resume";
   const selectedProvider = resolveProvider(provider.value);
   provider.disabled = working;
-  get<HTMLInputElement>("api-key").placeholder = `Paste ${providerKeyLabel(selectedProvider)} key`;
+  const laya = selectedProvider === "laya";
+  get("laya-fields").hidden = !laya;
+  get<HTMLInputElement>("api-key").placeholder = laya
+    ? "Key, only if LAYA_API_KEY is set"
+    : `Paste ${providerKeyLabel(selectedProvider)} key`;
   get("key-status").textContent = hasKey
-    ? `${selectedProvider === "typesafe" ? "TypeSafe" : "Vercel"} · Key saved`
-    : "API key required";
+    ? laya
+      ? `Laya · ${endpoint}`
+      : `${selectedProvider === "typesafe" ? "TypeSafe" : "Vercel"} · Key saved`
+    : laya
+      ? "Server URL required"
+      : "API key required";
   get("disclosure").textContent =
     `Analyze sends up to 60 element descriptions to ${providerLabel(selectedProvider)}. Main article text and form values are excluded; snippets may still contain personal data.`;
   get("auto-disclosure").textContent =
-    `On page visit automatically sends element snippets to ${providerLabel(selectedProvider)} for new templates. Snippets may contain personal data. API charges apply. Cached templates are reused.`;
+    `On page visit automatically sends element snippets to ${providerLabel(selectedProvider)} for new templates. Snippets may contain personal data.${laya ? "" : " API charges apply."} Cached templates are reused.`;
+  get("remove-key").textContent = laya ? "Remove saved server" : "Remove saved key";
   get("remove-key").hidden = !hasKey;
   get("disclosure").hidden = !current || mode.value === "auto";
   get("auto-disclosure").hidden = mode.value !== "auto";
@@ -123,6 +133,7 @@ async function load() {
     hasKey: boolean;
     mode: "manual" | "auto";
     provider: Provider;
+    endpoint: string;
   }>({
     type: "settings",
   });
@@ -130,6 +141,8 @@ async function load() {
   global.checked = config.enabled;
   mode.value = config.mode;
   savedProvider = resolveProvider(config.provider);
+  endpoint = config.endpoint;
+  if (!get<HTMLInputElement>("laya-url").value) get<HTMLInputElement>("laya-url").value = endpoint;
   provider.value = savedProvider;
   if (tabId !== undefined) {
     try {
@@ -190,6 +203,23 @@ get("key-form").addEventListener("submit", (event) => {
   event.preventDefault();
   const input = get<HTMLInputElement>("api-key");
   const key = input.value.trim();
+  if (resolveProvider(provider.value) === "laya") {
+    const url = get<HTMLInputElement>("laya-url").value.trim();
+    if (!url) {
+      error(new Error("Enter your Laya server URL."));
+      return;
+    }
+    void (async () => {
+      await act({ type: "saveLaya", endpoint: url, key });
+      input.value = "";
+      if (errorBox.hidden) {
+        get<HTMLDetailsElement>("connection").open = false;
+        get("notice").textContent = "Laya server saved. Analyze a page to verify it responds.";
+        get("notice").hidden = false;
+      }
+    })();
+    return;
+  }
   if (!key) {
     error(new Error(`Enter a ${providerKeyLabel(resolveProvider(provider.value))} API key.`));
     return;

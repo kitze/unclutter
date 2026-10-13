@@ -59,7 +59,18 @@
           ><select id="provider">
             <option value="vercel">Vercel AI Gateway</option>
             <option value="typesafe">TypeSafe AI</option>
+            <option value="laya">Self-hosted Laya</option>
           </select>
+          <div id="laya-fields" hidden>
+            <label for="laya-url">Server URL</label>
+            <input
+              id="laya-url"
+              type="url"
+              autocomplete="off"
+              spellcheck="false"
+              placeholder="http://localhost:8000"
+            />
+          </div>
           <label for="api-key">API key</label>
           <div class="key-row">
             <input

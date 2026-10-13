@@ -92,11 +92,18 @@ test("manual default, disabled mode/key/profile and persisted attempts block aut
     enabled: true,
     apiKey: "synthetic-test-key",
     provider: "vercel",
+    endpoint: "",
   };
   assert.equal(shouldAutoAnalyze(settings, null, false), true);
   assert.equal(shouldAutoAnalyze({ ...settings, mode: "manual" }, null, false), false);
   assert.equal(shouldAutoAnalyze({ ...settings, enabled: false }, null, false), false);
   assert.equal(shouldAutoAnalyze({ ...settings, apiKey: "" }, null, false), false);
+  const laya = { ...settings, provider: "laya" as const, apiKey: "" };
+  assert.equal(
+    shouldAutoAnalyze({ ...laya, endpoint: "http://localhost:8000" }, null, false),
+    true,
+  );
+  assert.equal(shouldAutoAnalyze(laya, null, false), false);
   assert.equal(shouldAutoAnalyze(settings, null, true), false);
   const old = profileSchema.parse({
     key: "test",

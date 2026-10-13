@@ -1,7 +1,13 @@
 import { browser } from "wxt/browser";
 import { z } from "zod";
 import { evaluate } from "../lib/jev";
-import { providers, providerKeyLabel, resolveProvider } from "../lib/providers";
+import {
+  isConfigured,
+  layaEndpoint,
+  providers,
+  providerKeyLabel,
+  resolveProvider,
+} from "../lib/providers";
 import {
   contextSchema,
   POLICY_VERSION,
@@ -24,6 +30,11 @@ const uiMessage = z.discriminatedUnion("type", [
     type: z.literal("saveKey"),
     key: z.string().trim().min(1).max(1000),
     provider: z.enum(providers),
+  }),
+  z.object({
+    type: z.literal("saveLaya"),
+    endpoint: z.string().trim().min(1).max(500),
+    key: z.string().trim().max(1000),
   }),
   z.object({ type: z.literal("provider"), provider: z.enum(providers) }),
   z.object({ type: z.literal("removeKey") }),
@@ -61,11 +72,22 @@ export default defineBackground(() => {
     .setAccessLevel?.({ accessLevel: "TRUSTED_CONTEXTS" })
     .catch(() => undefined);
   const settings = async (): Promise<Settings> => {
-    const data = await browser.storage.local.get(["enabled", "apiKey", "mode", "provider"]);
+    const data = await browser.storage.local.get([
+      "enabled",
+      "apiKey",
+      "mode",
+      "provider",
+      "layaEndpoint",
+      "layaKey",
+    ]);
+    const provider = resolveProvider(data.provider);
+    // Laya keeps its own key so a hosted-provider key is never sent to a self-hosted server.
+    const key = provider === "laya" ? data.layaKey : data.apiKey;
     return {
       enabled: data.enabled !== false,
-      apiKey: typeof data.apiKey === "string" ? data.apiKey : "",
-      provider: resolveProvider(data.provider),
+      apiKey: typeof key === "string" ? key : "",
+      provider,
+      endpoint: typeof data.layaEndpoint === "string" ? data.layaEndpoint : "",
       mode: data.mode === "auto" ? "auto" : "manual",
     };
   };
@@ -131,8 +153,12 @@ export default defineBackground(() => {
       const before = await profile(snapshot.context);
       const attempt = (await browser.storage.local.get(attemptKey))[attemptKey];
       if (automatic && !shouldAutoAnalyze(config, before, !!attempt)) return;
-      if (!config.apiKey)
-        throw new Error(`Add your ${providerKeyLabel(config.provider)} API key first.`);
+      if (!isConfigured(config))
+        throw new Error(
+          config.provider === "laya"
+            ? "Add your Laya server URL first."
+            : `Add your ${providerKeyLabel(config.provider)} API key first.`,
+        );
       if (!config.enabled) throw new Error("Enable Unclutter before analyzing.");
       tabJobs.add(tabId);
       tabErrors.delete(tabId);
@@ -140,7 +166,7 @@ export default defineBackground(() => {
       // must not create a retry loop across navigation or another tab.
       await browser.storage.local.set({ [attemptKey]: { startedAt: Date.now(), error: null } });
       await badge(tabId);
-      const rules = await evaluate(snapshot, config.apiKey, config.provider);
+      const rules = await evaluate(snapshot, config.apiKey, config.provider, config.endpoint);
       const latestConfig = await settings();
       if (!latestConfig.enabled || (automatic && latestConfig.mode !== "auto")) return;
       const current = snapshotSchema.parse(await send<Snapshot>(tabId, "snapshot"));
@@ -221,7 +247,7 @@ export default defineBackground(() => {
         return {
           profile: saved,
           enabled: config.enabled,
-          autoEnabled: config.mode === "auto" && !!config.apiKey,
+          autoEnabled: config.mode === "auto" && isConfigured(config),
         };
       }
       if (sender.url !== browser.runtime.getURL("/popup.html"))
@@ -231,8 +257,9 @@ export default defineBackground(() => {
         const config = await settings();
         return {
           enabled: config.enabled,
-          hasKey: !!config.apiKey,
+          hasKey: isConfigured(config),
           provider: config.provider,
+          endpoint: config.endpoint,
           mode: config.mode,
         };
       }
@@ -240,12 +267,24 @@ export default defineBackground(() => {
         await browser.storage.local.set({ apiKey: message.key, provider: message.provider });
         return null;
       }
+      if (message.type === "saveLaya") {
+        layaEndpoint(message.endpoint);
+        await browser.storage.local.set({
+          layaEndpoint: message.endpoint,
+          layaKey: message.key,
+          provider: "laya",
+        });
+        return null;
+      }
       if (message.type === "provider") {
         await browser.storage.local.set({ provider: message.provider });
         return null;
       }
       if (message.type === "removeKey") {
-        await browser.storage.local.remove("apiKey");
+        const { provider } = await settings();
+        await browser.storage.local.remove(
+          provider === "laya" ? ["layaEndpoint", "layaKey"] : "apiKey",
+        );
         return null;
       }
       if (message.type === "global") {

@@ -2,7 +2,7 @@ import { evaluate } from "../lib/jev";
 import type { Snapshot } from "../lib/model";
 import { providerLabel, smokeCredentials } from "../lib/providers";
 
-const { provider, key } = smokeCredentials(process.env);
+const { provider, key, endpoint } = smokeCredentials(process.env);
 const snapshot: Snapshot = {
   url: "https://example.com/article/synthetic",
   context: { key: "synthetic", kind: "article", label: "article", origin: "https://example.com" },
@@ -46,7 +46,7 @@ const snapshot: Snapshot = {
   ],
 };
 const start = performance.now();
-const rules = await evaluate(snapshot, key, provider);
+const rules = await evaluate(snapshot, key, provider, endpoint);
 if (!rules.some((rule) => rule.selector === "div.ad-banner"))
   throw new Error("Synthetic ad was not selected.");
 if (rules.some((rule) => rule.selector === "aside.article-context"))
@@ -60,5 +60,5 @@ if (
 if (!rules.some((rule) => rule.selector === 'div[data-testid="ad-unit"]'))
   throw new Error("Empty ad wrapper was not selected.");
 console.log(
-  `PASS: live Jev via ${providerLabel(provider)} selected ad, cookie dialog and empty ad wrapper; kept editorial context (${Math.round(performance.now() - start)} ms).`,
+  `PASS: live ${provider === "laya" ? "Laya" : "Jev"} via ${providerLabel(provider)} selected ad, cookie dialog and empty ad wrapper; kept editorial context (${Math.round(performance.now() - start)} ms).`,
 );

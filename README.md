@@ -87,7 +87,7 @@ WXT browser extension: Jev\-powered page clutter removal with reusable template 
 
 # Unclutter
 
-WXT extension for Chrome / Chromium and Firefox. Jev classifies nonessential page elements through Vercel AI Gateway or TypeSafe AI directly; the extension stores and reapplies local hiding rules by page template.
+WXT extension for Chrome / Chromium and Firefox. Jev classifies nonessential page elements through Vercel AI Gateway or TypeSafe AI directly, or a self-hosted Laya server does; the extension stores and reapplies local hiding rules by page template.
 
 ## Install from source
 
@@ -114,6 +114,19 @@ For Firefox 140+, run `bun run build:firefox`, open `about:debugging#/runtime/th
 Bring your own [Vercel AI Gateway](https://vercel.com/ai-gateway) key or [TypeSafe AI key](https://console.typesafe.ai/settings/keys) (the same kind used as `JEV_KEY` / `TYPESAFE_API_KEY`). Configure it in the extension popup, not in source code or build-time environment variables. No key or shared account is bundled.
 
 **One key is stored.** Switching the provider persists immediately and reuses that key for the next analysis; paste a matching key if the providers use different credentials. Saving a key saves the selected provider with it. Removing the key does not reset the provider. Existing installations without a provider setting default to Gateway. Saved templates remain usable offline regardless of provider.
+
+### Self-hosted Laya
+
+[Laya](https://huggingface.co/convaiinnovations/laya) is an Apache-2.0 open-weights decision model whose `laya-serve` speaks Jev's `/v1/systemone` protocol. No account or credits needed; runs on CPU, Apple GPU or CUDA.
+
+```sh
+python3.12 -m venv .venv && .venv/bin/pip install "laya[serve]"
+LAYA_HOST=127.0.0.1 .venv/bin/laya-serve   # http://127.0.0.1:8000; set LAYA_API_KEY to require a key
+```
+
+In the popup choose **Self-hosted Laya**, enter the server URL, and add a key only if `LAYA_API_KEY` is set. Laya keeps its own key, so a saved Gateway/TypeSafe key is never sent to your server.
+
+Laya scores each question against a 512-token window and truncates silently, so Unclutter sends one short question per element (4 in flight) instead of Jev's single batched request. Its probabilities are calibrated rather than inflated, so an element is hidden at probability 0.6 for its category rather than Jev's 0.9. Smoke test: `LAYA_URL=http://127.0.0.1:8000 bunx tsx scripts/smoke-jev.ts`.
 
 TypeSafe direct uses `POST https://api.typesafe.ai/v1/systemone`, Bearer authentication, and body model `jev-latest`. Gateway uses its evaluation-model v4 endpoint and `typesafe-ai/jev` headers. TypeSafe requests never carry Gateway protocol headers; Gateway requests never carry the TypeSafe model field.
 
