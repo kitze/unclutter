@@ -1,7 +1,9 @@
 <!-- readme-sync:repo:start -->
+
 # unclutter
 
 WXT browser extension: Jev\-powered page clutter removal with reusable template rules\.
+
 <!-- readme-sync:repo:end -->
 
 <!-- readme-sync:header:start -->
@@ -11,7 +13,6 @@ WXT browser extension: Jev\-powered page clutter removal with reusable template 
   <a href="https://kitze.io/?ref=kitze%2Funclutter">kitze.io</a> · <a href="https://x.com/thekitze?ref=kitze%2Funclutter">X</a> · <a href="https://youtube.com/kitze?ref=kitze%2Funclutter">YouTube</a>
 </p>
 <br clear="all">
-
 
 <h3>More projects by Kitze</h3>
 <table>
@@ -172,7 +173,6 @@ Architecture: `lib/page-context.ts` identifies templates, `lib/dom.ts` extracts 
 ## License
 
 [MIT](LICENSE).
-
 
 <!-- readme-sync:footer:start -->
 <hr>
