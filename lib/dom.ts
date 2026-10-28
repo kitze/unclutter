@@ -17,17 +17,47 @@ const stable = (value: string) =>
 const identity = (el: Element) =>
   `${el.id} ${el.getAttribute("class") ?? ""} ${el.getAttribute("aria-label") ?? ""} ${el.getAttribute("title") ?? ""} ${el.getAttribute("data-testid") ?? ""} ${el.getAttribute("data-component") ?? ""}`;
 
+// Consent UI is a container. A heading, link or script named "cookie" is page content or the
+// site's own consent-settings link, which must stay visible.
+const container = (el: Element) =>
+  el.matches("div,section,aside,dialog,iframe,form,footer") || el.tagName.includes("-");
+const consentName =
+  /cookie|consent|onetrust|didomi|iubenda|usercentrics|cookiebot|cybot|truste|qc-cmp|osano|termly|gdpr|privacy[-_ ]?(?:cp[-_ ]?)?(?:manager|modal|dialog|wall|banner|notice|center|centre|popup|overlay|prompt)/i;
+const consentText =
+  /cookie|consent|consenso|consentement|einwilligung|zustimm|personal (?:data|information)|données personnelles|dati personali|datos personales|privacy choices/i;
+const consentAction =
+  /accept|reject|agree|manage|preferences|settings|akzeptier|zustimm|ablehn|accett|rifiut|refuser|acept|rechaz|continu/i;
+// Consent roots that sit late in large documents, plus the vendor roots the name test covers.
+const consentRoots =
+  '[role="dialog"],[aria-modal="true"],[id^="sp_message_"],[id*="cookie" i],[id*="consent" i],[class*="consent" i],[id*="gdpr" i],[class*="gdpr" i],[class*="privacy-cp" i],#onetrust-banner-sdk,#onetrust-consent-sdk,#didomi-host,#iubenda-cs-banner,.qc-cmp2-container,.qc-cmp-cleanslate,#usercentrics-root,#usercentrics-cmp-ui,#CybotCookiebotDialog,#truste-consent-track';
+
+// "name": a consent vendor or cookie/consent naming, near-certain. "text": an overlay whose
+// text reads as a consent prompt, which the model still has to confirm.
+export function cookieEvidence(el: Element): "name" | "text" | null {
+  if (consentPrefixes.some((prefix) => el.id.startsWith(prefix))) return "name";
+  // A GDPR checkbox inside a contact or signup form is a form field, not a consent banner.
+  if (!container(el) || el.parentElement?.closest("form")) return null;
+  if (consentName.test(identity(el))) return "name";
+  const overlay =
+    el.matches('[role="dialog"],[aria-modal="true"]') ||
+    ["fixed", "sticky"].includes(el.ownerDocument.defaultView?.getComputedStyle(el).position ?? "");
+  if (!overlay) return null;
+  const text = (el.textContent ?? "").slice(0, 8000);
+  return consentText.test(text) && consentAction.test(text) ? "text" : null;
+}
+
 export function isCookieNotice(el: Element): boolean {
-  if (consentPrefixes.some((prefix) => el.id.startsWith(prefix))) return true;
-  const name = identity(el);
-  if (/cookie|consent|onetrust|didomi|privacy[-_ ]?(?:manager|modal|dialog)/i.test(name))
-    return true;
-  if (!el.matches('[role="dialog"],[aria-modal="true"]')) return false;
-  const text = el.textContent ?? "";
-  return (
-    /cookies|consent|privacy choices/i.test(text) &&
-    /accept|reject|agree|manage|preferences/i.test(text)
-  );
+  return cookieEvidence(el) !== null;
+}
+
+// Visible consent UI that saved rules do not hide, e.g. a banner that mounted after analysis.
+export function uncoveredConsent(doc: Document): boolean {
+  const tail = [...(doc.body?.children ?? [])].slice(-40);
+  return [...doc.querySelectorAll(consentRoots), ...tail].some((el) => {
+    if (!isCookieNotice(el) || isProtected(el)) return false;
+    const rect = el.getBoundingClientRect();
+    return rect.width * rect.height > 20_000;
+  });
 }
 
 export function isProtected(el: Element): boolean {
@@ -88,11 +118,13 @@ function redact(text: string): string {
 
 export function collectCandidates(doc: Document): Candidate[] {
   // Consent UI often arrives at the very end of body, after thousands of nodes.
+  // Body's last children come first: consent modals are usually appended there.
   const priority = [
-    ...doc.querySelectorAll(
-      '[role="dialog"],[aria-modal="true"],[id^="sp_message_"],[id*="cookie" i],[id*="consent" i],#onetrust-banner-sdk,#didomi-host',
-    ),
-  ].slice(0, 100);
+    ...[...(doc.body?.children ?? [])].slice(-40),
+    ...doc.querySelectorAll(consentRoots),
+  ]
+    .filter(container)
+    .slice(0, 100);
   const elements = [
     ...new Set([
       ...priority,
@@ -103,8 +135,15 @@ export function collectCandidates(doc: Document): Candidate[] {
   const output: Candidate[] = [];
   for (const el of elements) {
     if (output.length >= 60) break;
-    const cookie = isCookieNotice(el);
-    const signals = `${cookie ? "Cookie consent overlay. Hide visually only; do not accept or reject consent. " : ""}${identity(el)} ${el.getAttribute("role") ?? ""}`;
+    const evidence = cookieEvidence(el);
+    const cookie = evidence !== null;
+    const hint =
+      evidence === "name"
+        ? "Cookie consent overlay. Hide visually only; do not accept or reject consent. "
+        : evidence === "text"
+          ? "Possible cookie consent overlay. "
+          : "";
+    const signals = `${hint}${identity(el)} ${el.getAttribute("role") ?? ""}`;
     const position = doc.defaultView?.getComputedStyle(el).position ?? "static";
     if (
       !cookie &&
@@ -260,9 +299,19 @@ export function createCleaner(doc: Document) {
           )
             override(el, property, "auto");
         }
+        // Sourcepoint and similar walls pin body with position: fixed. Only unpin a page whose
+        // content is taller than the viewport, so apps that scroll an inner container keep theirs.
+        if (
+          overrides.get(el)?.has("position") ||
+          (computed?.position === "fixed" &&
+            el.scrollHeight > (doc.defaultView?.innerHeight ?? Infinity) + 50)
+        ) {
+          override(el, "position", "static");
+          override(el, "top", "auto");
+        }
       } else {
-        release(el, "overflow-x");
-        release(el, "overflow-y");
+        for (const property of ["overflow-x", "overflow-y", "position", "top"])
+          release(el, property);
       }
     }
     if (marked.size && !style.isConnected) (doc.head ?? doc.documentElement).append(style);

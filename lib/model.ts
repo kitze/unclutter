@@ -79,6 +79,21 @@ export function shouldAutoAnalyze(
     (!profile || (profile.enabled && profile.analysisVersion < ANALYSIS_VERSION))
   );
 }
+// A saved template can predate a consent banner that mounts late. Automatic mode re-analyzes
+// such a template once per analysis version; the persisted attempt prevents repeats.
+export function shouldRecheckConsent(
+  settings: Settings,
+  profile: Profile | null,
+  attempted: boolean,
+): boolean {
+  return (
+    settings.enabled &&
+    settings.mode === "auto" &&
+    !!settings.apiKey &&
+    !attempted &&
+    !!profile?.enabled
+  );
+}
 export type Reply<T> = { ok: true; data: T } | { ok: false; error: string };
 export function unwrap<T>(reply: Reply<T>): T {
   if (!reply.ok) throw new Error(reply.error);

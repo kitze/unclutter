@@ -1,8 +1,20 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { JSDOM } from "jsdom";
-import { collectCandidates, createCleaner, matchingElements } from "../lib/dom";
-import { ANALYSIS_VERSION, profileSchema, shouldAutoAnalyze, type Settings } from "../lib/model";
+import {
+  collectCandidates,
+  cookieEvidence,
+  createCleaner,
+  matchingElements,
+  uncoveredConsent,
+} from "../lib/dom";
+import {
+  ANALYSIS_VERSION,
+  profileSchema,
+  shouldAutoAnalyze,
+  shouldRecheckConsent,
+  type Settings,
+} from "../lib/model";
 
 const doc = (html: string) => new JSDOM(html).window.document;
 
@@ -123,4 +135,112 @@ test("manual default, disabled mode/key/profile and persisted attempts block aut
     ),
     false,
   );
+});
+
+const legalese = "We and our partners use cookies to store and access personal data. ".repeat(50);
+
+test("consent platform walls are candidates even with long legal text", () => {
+  for (const root of [
+    '<div id="iubenda-cs-banner" class="iubenda-cs-visible">',
+    '<div class="qc-cmp2-container">',
+    '<div class="gdpr-lmd-standard gdpr-lmd-wall">',
+    '<div class="privacy-cp-wall">',
+    '<aside id="usercentrics-cmp-ui">',
+  ]) {
+    const tag = root.slice(1, root.indexOf(" "));
+    const d = doc(`<main><h1>News</h1></main>${root}${legalese}<button>Accept</button></${tag}>`);
+    const candidate = collectCandidates(d).find((c) => c.signals.startsWith("Cookie consent"));
+    assert.ok(candidate, root);
+  }
+});
+
+test("headings, links and scripts named after cookies are never consent UI", () => {
+  const d = doc(
+    '<main><h2 id="h-why-choose-cookiebot-cmp">Why choose Cookiebot CMP</h2><p>Text</p></main>' +
+      '<footer class="site-footer"><a id="kw-cookie-link" href="/c">Gestione Cookie</a></footer>' +
+      '<script id="Cookiebot"></script>' +
+      '<form><input type="email"><div class="ff-el-gdpr_agreement"><input type="checkbox"> I consent</div></form>',
+  );
+  assert.equal(cookieEvidence(d.querySelector(".ff-el-gdpr_agreement")!), null);
+  for (const selector of ["h2", "a", "script"])
+    assert.equal(cookieEvidence(d.querySelector(selector)!), null);
+  assert.ok(collectCandidates(d).every((c) => !/^(?:h2|a|script)[#.]/.test(c.selector)));
+});
+
+test("a fixed overlay that reads as a consent prompt is a weak candidate, late in the page", () => {
+  const modal =
+    '<div class="legal-modal" style="position: fixed">Legal Terms and Privacy. By clicking Agree, you agree to our use of cookies.<button>Agree</button></div>';
+  const d = doc(`<main><h1>News</h1></main>${"<div></div>".repeat(6100)}${modal}`);
+  const el = d.querySelector(".legal-modal")!;
+  assert.equal(cookieEvidence(el), "text");
+  const candidate = collectCandidates(d).find((c) => c.selector === "div.legal-modal");
+  assert.match(candidate!.signals, /^Possible cookie consent overlay\. /);
+  (el as HTMLElement).style.position = "static";
+  assert.equal(cookieEvidence(el), null);
+});
+
+test("only visible, unprotected consent UI asks for a re-check", () => {
+  const d = doc(
+    '<main><h1>News</h1></main><div id="onetrust-banner-sdk">We use cookies. Accept</div>',
+  );
+  const banner = d.querySelector("#onetrust-banner-sdk")!;
+  const size = { width: 0, height: 0 };
+  banner.getBoundingClientRect = () => ({ ...size }) as DOMRect;
+  assert.equal(uncoveredConsent(d), false);
+  Object.assign(size, { width: 1280, height: 200 });
+  assert.equal(uncoveredConsent(d), true);
+  banner.append(d.createElement("nav"));
+  assert.equal(uncoveredConsent(d), false);
+});
+
+test("late consent re-checks need automatic mode, a saved enabled template and no prior attempt", () => {
+  const settings: Settings = {
+    mode: "auto",
+    enabled: true,
+    apiKey: "synthetic-test-key",
+    provider: "vercel",
+  };
+  const profile = profileSchema.parse({
+    key: "k",
+    label: "article",
+    origin: "https://example.com",
+    enabled: true,
+    version: 1,
+    analysisVersion: ANALYSIS_VERSION,
+    analyzedAt: 1,
+    candidateCount: 1,
+    rules: [],
+  });
+  assert.equal(shouldRecheckConsent(settings, profile, false), true);
+  assert.equal(shouldRecheckConsent(settings, profile, true), false);
+  assert.equal(shouldRecheckConsent(settings, null, false), false);
+  assert.equal(shouldRecheckConsent(settings, { ...profile, enabled: false }, false), false);
+  assert.equal(shouldRecheckConsent({ ...settings, mode: "manual" }, profile, false), false);
+  assert.equal(shouldRecheckConsent({ ...settings, apiKey: "" }, profile, false), false);
+});
+
+test("a position-fixed body lock is released with the consent overlay and restored on pause", () => {
+  const d = doc(
+    '<body style="position: fixed; top: 0px"><main><h1>News</h1></main><div id="sp_message_container_1">Consent</div></body>',
+  );
+  Object.defineProperty(d.body, "scrollHeight", { value: 5000 });
+  const cleaner = createCleaner(d);
+  const rules = [
+    { selector: 'div[id^="sp_message_container_"]', category: "cookie" as const, enabled: true },
+  ];
+  cleaner.apply(rules);
+  assert.equal(d.body.style.position, "static");
+  assert.equal(d.body.style.top, "auto");
+  cleaner.apply(rules);
+  assert.equal(d.body.style.position, "static");
+  cleaner.restore();
+  assert.equal(d.body.style.position, "fixed");
+  assert.equal(d.body.style.top, "0px");
+
+  const app = doc(
+    '<body style="position: fixed"><div id="sp_message_container_1">Consent</div></body>',
+  );
+  Object.defineProperty(app.body, "scrollHeight", { value: 100 });
+  createCleaner(app).apply(rules);
+  assert.equal(app.body.style.position, "fixed");
 });
