@@ -1,7 +1,9 @@
 <!-- readme-sync:repo:start -->
+
 # unclutter
 
 WXT browser extension: Jev\-powered page clutter removal with reusable template rules\.
+
 <!-- readme-sync:repo:end -->
 
 <!-- readme-sync:header:start -->
@@ -11,7 +13,6 @@ WXT browser extension: Jev\-powered page clutter removal with reusable template 
   <a href="https://kitze.io/?ref=kitze%2Funclutter">kitze.io</a> · <a href="https://x.com/thekitze?ref=kitze%2Funclutter">X</a> · <a href="https://youtube.com/kitze?ref=kitze%2Funclutter">YouTube</a>
 </p>
 <br clear="all">
-
 
 <h3>More projects by Kitze</h3>
 <table>
@@ -235,7 +236,7 @@ WXT browser extension: Jev\-powered page clutter removal with reusable template 
 
 # Unclutter
 
-WXT extension for Chrome / Chromium and Firefox. Jev classifies nonessential page elements through Vercel AI Gateway or TypeSafe AI directly; the extension stores and reapplies local hiding rules by page template.
+WXT extension for Chrome / Chromium and Firefox. Jev classifies nonessential page elements through OpenRouter, Vercel AI Gateway or TypeSafe AI directly; the extension stores and reapplies local hiding rules by page template.
 
 ## Install from source
 
@@ -252,18 +253,18 @@ bun run build
 2. Turn on **Developer mode**.
 3. Click **Load unpacked** and select `.output/chrome-mv3` inside the cloned repository.
 4. Pin Unclutter, refresh any already-open website, then open its popup.
-5. Under **Connection**, choose **Vercel AI Gateway** or **TypeSafe AI**, paste the matching API key, and save it.
+5. Under **Connection**, choose **OpenRouter (Jev)**, **Vercel AI Gateway** or **TypeSafe AI**, paste the matching API key, and save it.
 6. Choose **Manual** (default) and click **Analyze page**, or select **On page visit**. Your selected provider must have credits / Jev access.
 
 After replacing unpacked builds, click **Reload** on the extension card and refresh website tabs. Existing keys/settings stay in place. V1 templates show **Update available**; **Re-analyze** once to include cookie dialogs, or automatic mode upgrades them once while preserving paused templates and keep-visible choices.
 
 For Firefox 140+, run `bun run build:firefox`, open `about:debugging#/runtime/this-firefox`, choose **Load Temporary Add-on**, and select `.output/firefox-mv2/manifest.json`. Temporary add-ons disappear on Firefox restart; permanent Firefox distribution requires Mozilla signing. Chrome/Edge/Brave can use the Chromium build. Safari packaging is not included.
 
-Bring your own [Vercel AI Gateway](https://vercel.com/ai-gateway) key or [TypeSafe AI key](https://console.typesafe.ai/settings/keys) (the same kind used as `JEV_KEY` / `TYPESAFE_API_KEY`). Configure it in the extension popup, not in source code or build-time environment variables. No key or shared account is bundled.
+Bring your own [OpenRouter](https://openrouter.ai/keys) key (`sk-or-…`), [Vercel AI Gateway](https://vercel.com/ai-gateway) key or [TypeSafe AI key](https://console.typesafe.ai/settings/keys) (the same kind used as `JEV_KEY` / `TYPESAFE_API_KEY`). Configure it in the extension popup, not in source code or build-time environment variables. No key or shared account is bundled.
 
 **One key is stored.** Switching the provider persists immediately and reuses that key for the next analysis; paste a matching key if the providers use different credentials. Saving a key saves the selected provider with it. Removing the key does not reset the provider. Existing installations without a provider setting default to Gateway. Saved templates remain usable offline regardless of provider.
 
-TypeSafe direct uses `POST https://api.typesafe.ai/v1/systemone`, Bearer authentication, and body model `jev-latest`. Gateway uses its evaluation-model v4 endpoint and `typesafe-ai/jev` headers. TypeSafe requests never carry Gateway protocol headers; Gateway requests never carry the TypeSafe model field.
+TypeSafe direct uses `POST https://api.typesafe.ai/v1/systemone`, Bearer authentication, and body model `jev-latest`. OpenRouter relays the same System One wire format at `POST https://openrouter.ai/api/alpha/decisions` with body model `typesafe/jev-1.13` and no Gateway protocol headers. Gateway uses its evaluation-model v4 endpoint and `typesafe-ai/jev` headers. TypeSafe and OpenRouter requests never carry Gateway protocol headers; Gateway requests never carry the TypeSafe model field.
 
 ## Behavior
 
@@ -320,7 +321,6 @@ Architecture: `lib/page-context.ts` identifies templates, `lib/dom.ts` extracts 
 ## License
 
 [MIT](LICENSE).
-
 
 <!-- readme-sync:footer:start -->
 <hr>

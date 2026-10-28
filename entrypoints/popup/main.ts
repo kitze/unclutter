@@ -49,7 +49,7 @@ function render() {
   provider.disabled = working;
   get<HTMLInputElement>("api-key").placeholder = `Paste ${providerKeyLabel(selectedProvider)} key`;
   get("key-status").textContent = hasKey
-    ? `${selectedProvider === "typesafe" ? "TypeSafe" : "Vercel"} · Key saved`
+    ? `${providerKeyLabel(selectedProvider)} · Key saved`
     : "API key required";
   get("disclosure").textContent =
     `Analyze sends up to 60 element descriptions to ${providerLabel(selectedProvider)}. Main article text and form values are excluded; snippets may still contain personal data.`;
