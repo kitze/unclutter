@@ -1,6 +1,6 @@
 import { z } from "zod";
 import { categories, type Candidate, type Rule, type Snapshot } from "./model";
-import type { Provider } from "./providers";
+import { layaEndpoint, type Provider } from "./providers";
 
 export const ENDPOINT = "https://ai-gateway.vercel.sh/v4/ai/evaluation-model";
 export const TYPESAFE_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
@@ -49,7 +49,16 @@ export function evaluationRequest(snapshot: Snapshot) {
   };
 }
 
-export function rulesFromAnswers(raw: unknown, candidates: Candidate[]): Rule[] {
+// Laya's probabilities are calibrated, so a clear ad scores ~0.7 where Jev reports 0.9+. Its
+// `confidence` field is a different statistic from Jev's and is not used.
+export const LAYA_CUTOFF = { probability: 0.6, confidence: false };
+const JEV_CUTOFF = { probability: 0.9, confidence: true };
+
+export function rulesFromAnswers(
+  raw: unknown,
+  candidates: Candidate[],
+  cutoff = JEV_CUTOFF,
+): Rule[] {
   const response = responseSchema.parse(raw);
   if (
     Object.keys(response.answers).length !== candidates.length ||
@@ -62,8 +71,9 @@ export function rulesFromAnswers(raw: unknown, candidates: Candidate[]): Rule[] 
     if (answer.choice === "keep" || answer.choice === "uncertain") return [];
     // Conservative operational cutoff, not a claim of calibrated accuracy.
     // If supplied, probabilities must support the selected choice.
-    if (answer.probabilities && (answer.probabilities[answer.choice] ?? 0) < 0.9) return [];
-    if (answer.confidence !== undefined && answer.confidence < 0.9) return [];
+    if (answer.probabilities && (answer.probabilities[answer.choice] ?? 0) < cutoff.probability)
+      return [];
+    if (cutoff.confidence && answer.confidence !== undefined && answer.confidence < 0.9) return [];
     return [{ selector: candidate.selector, category: answer.choice, enabled: true }];
   });
 }
@@ -97,12 +107,82 @@ export function evaluationCall(
   };
 }
 
+// Laya scores every question against the whole state, right-truncated at 512 tokens, and cuts
+// the question head to 192 tokens. A 60-element state would silently lose most elements and
+// the long Jev rubric would be dropped, so Laya gets one short question per element.
+const layaCriteria = {
+  keep: "Main content, navigation, login, payment, paywall or other useful content.",
+  ad: "Advertisement, sponsored content, or an empty ad slot.",
+  cookie: "Cookie or privacy consent banner or overlay.",
+  promotion: "Promotional sales popup or campaign.",
+  newsletter: "Newsletter signup invitation.",
+  social: "Social sharing or follow buttons.",
+  uncertain: "Unclear or mixed content.",
+} satisfies Record<(typeof categories)[number], string>;
+
+export function layaRequest(pageType: string, candidate: Candidate) {
+  const { tag, signals, text, position } = candidate;
+  return {
+    state: { pageType, element: { tag, signals, text, position } },
+    questions: {
+      [candidate.id]: {
+        type: "choice",
+        instructions: "What kind of web page element is this?",
+        criteria: layaCriteria,
+      },
+    },
+  };
+}
+
+async function evaluateLaya(snapshot: Snapshot, key: string, endpoint: string): Promise<Rule[]> {
+  const url = layaEndpoint(endpoint);
+  const queue = [...snapshot.candidates];
+  const answers: Record<string, unknown> = {};
+  const failed = new AbortController();
+  const worker = async () => {
+    for (let candidate = queue.shift(); candidate; candidate = queue.shift()) {
+      let response: Response;
+      try {
+        response = await fetch(url, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            ...(key ? { Authorization: `Bearer ${key}` } : {}),
+          },
+          body: JSON.stringify(layaRequest(snapshot.context.kind, candidate)),
+          signal: AbortSignal.any([failed.signal, AbortSignal.timeout(25_000)]),
+        });
+      } catch (error) {
+        if (failed.signal.aborted) return;
+        failed.abort();
+        throw new Error(`Could not reach the Laya server at ${new URL(url).origin}.`, {
+          cause: error,
+        });
+      }
+      if (!response.ok) {
+        failed.abort();
+        const advice =
+          response.status === 401 || response.status === 403
+            ? "Check your Laya server key."
+            : "Check the Laya server log.";
+        throw new Error(`Laya request failed: HTTP ${response.status}. ${advice}`);
+      }
+      const answer = responseSchema.parse(await response.json()).answers[candidate.id];
+      if (answer) answers[candidate.id] = answer;
+    }
+  };
+  await Promise.all(Array.from({ length: 4 }, worker));
+  return rulesFromAnswers({ answers }, snapshot.candidates, LAYA_CUTOFF);
+}
+
 export async function evaluate(
   snapshot: Snapshot,
   key: string,
   provider: Provider = "vercel",
+  endpoint = "",
 ): Promise<Rule[]> {
   if (!snapshot.candidates.length) return [];
+  if (provider === "laya") return evaluateLaya(snapshot, key, endpoint);
   const { url, init } = evaluationCall(snapshot, key, provider);
   const response = await fetch(url, init);
   if (!response.ok) {

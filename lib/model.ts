@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { Provider } from "./providers";
+import { isConfigured, type Provider } from "./providers";
 
 export const POLICY_VERSION = 1;
 export const ANALYSIS_VERSION = 2;
@@ -64,6 +64,7 @@ export type Settings = {
   enabled: boolean;
   apiKey: string;
   provider: Provider;
+  endpoint: string;
   mode: "manual" | "auto";
 };
 export function shouldAutoAnalyze(
@@ -74,7 +75,7 @@ export function shouldAutoAnalyze(
   return (
     settings.enabled &&
     settings.mode === "auto" &&
-    !!settings.apiKey &&
+    isConfigured(settings) &&
     !attempted &&
     (!profile || (profile.enabled && profile.analysisVersion < ANALYSIS_VERSION))
   );
