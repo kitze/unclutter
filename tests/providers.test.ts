@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ENDPOINT,
+  OPENROUTER_ENDPOINT,
+  OPENROUTER_MODEL,
   TYPESAFE_ENDPOINT,
   evaluate,
   evaluationCall,
@@ -81,6 +83,23 @@ test("stored provider resolution defaults missing/unknown values to Gateway", ()
   for (const input of [undefined, null, "unknown", "", {}, 1, "vercel"])
     assert.equal(resolveProvider(input), "vercel");
   assert.equal(resolveProvider("typesafe"), "typesafe");
+  assert.equal(resolveProvider("openrouter"), "openrouter");
+});
+
+test("OpenRouter construction targets the decisions endpoint with the Jev slug and no Gateway headers", () => {
+  const call = evaluationCall(snapshot, "synthetic-test-key", "openrouter");
+  assert.equal(call.url, OPENROUTER_ENDPOINT);
+  assert.equal(call.init.method, "POST");
+  assert.deepEqual(call.init.headers, {
+    Authorization: "Bearer synthetic-test-key",
+    "Content-Type": "application/json",
+  });
+  assert.deepEqual(JSON.parse(String(call.init.body)), {
+    ...evaluationRequest(snapshot),
+    model: OPENROUTER_MODEL,
+  });
+  assert.ok(!String(call.init.body).includes("token=private"));
+  assert.ok(!String(call.init.body).includes("synthetic-test-key"));
 });
 
 test("TypeSafe response ignores top-level metadata and enforces BOTH supplied confidence gates", () => {
@@ -137,6 +156,17 @@ test("HTTP errors are provider aware and never echo response bodies or keys", as
   }
 });
 
+test("OpenRouter errors point at the OpenRouter key and never echo bodies", async (t) => {
+  t.mock.method(
+    globalThis,
+    "fetch",
+    async () => new Response("private upstream response", { status: 401 }),
+  );
+  await assert.rejects(evaluate(snapshot, "synthetic-test-key", "openrouter"), {
+    message: "Jev request failed: HTTP 401. Check your OpenRouter API key and credits.",
+  });
+});
+
 test("smoke credentials support direct aliases and reject mixed provider families", () => {
   assert.deepEqual(smokeCredentials({ JEV_KEY: " synthetic-test-key " }), {
     provider: "typesafe",
@@ -150,6 +180,18 @@ test("smoke credentials support direct aliases and reject mixed provider familie
     provider: "vercel",
     key: "synthetic-test-key",
   });
+  assert.deepEqual(smokeCredentials({ OPENROUTER_API_KEY: "synthetic-test-key" }), {
+    provider: "openrouter",
+    key: "synthetic-test-key",
+  });
+  assert.throws(
+    () =>
+      smokeCredentials({
+        OPENROUTER_API_KEY: "synthetic-test-key",
+        AI_GATEWAY_API_KEY: "synthetic-test-key",
+      }),
+    /Set only one/,
+  );
   assert.throws(
     () =>
       smokeCredentials({ JEV_KEY: "synthetic-test-key", AI_GATEWAY_API_KEY: "synthetic-test-key" }),
