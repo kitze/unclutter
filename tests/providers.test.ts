@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ENDPOINT,
+  OPENROUTER_ENDPOINT,
+  OPENROUTER_MODEL,
   TYPESAFE_ENDPOINT,
   evaluate,
   evaluationCall,
@@ -77,10 +79,39 @@ test("Gateway construction retains v4 headers, default route and no TypeSafe mod
   assert.equal(JSON.parse(String(call.init.body)).model, undefined);
 });
 
+test("OpenRouter construction uses the Decisions API, Bearer and the Jev model alias", () => {
+  const call = evaluationCall(snapshot, "synthetic-test-key", "openrouter");
+  assert.equal(call.url, OPENROUTER_ENDPOINT);
+  assert.equal(call.url, "https://openrouter.ai/api/alpha/decisions");
+  assert.deepEqual(call.init.headers, {
+    Authorization: "Bearer synthetic-test-key",
+    "Content-Type": "application/json",
+    "X-Title": "Unclutter",
+  });
+  const body = JSON.parse(String(call.init.body));
+  assert.deepEqual(body, { ...evaluationRequest(snapshot), model: OPENROUTER_MODEL });
+  assert.equal(body.model, "~typesafe/jev-latest");
+  assert.ok(!String(call.init.body).includes("token=private"));
+});
+
+test("evaluate POSTs to OpenRouter and parses the decision payload into rules", async (t) => {
+  const fetch = t.mock.method(globalThis, "fetch", async (url: unknown, init: RequestInit) => {
+    assert.equal(url, OPENROUTER_ENDPOINT);
+    assert.equal(new Headers(init.headers).get("Authorization"), "Bearer synthetic-test-key");
+    assert.equal(new Headers(init.headers).has("ai-model-id"), false);
+    return Response.json({ ...result(), usage: { input_tokens: 100, output_tokens: 20, cost: 0 } });
+  });
+  assert.deepEqual(await evaluate(snapshot, "synthetic-test-key", "openrouter"), [
+    { selector: "div.ad-banner", category: "ad", enabled: true },
+  ]);
+  assert.equal(fetch.mock.calls.length, 1);
+});
+
 test("stored provider resolution defaults missing/unknown values to Gateway", () => {
   for (const input of [undefined, null, "unknown", "", {}, 1, "vercel"])
     assert.equal(resolveProvider(input), "vercel");
   assert.equal(resolveProvider("typesafe"), "typesafe");
+  assert.equal(resolveProvider("openrouter"), "openrouter");
 });
 
 test("TypeSafe response ignores top-level metadata and enforces BOTH supplied confidence gates", () => {
@@ -118,18 +149,31 @@ test("HTTP errors are provider aware and never echo response bodies or keys", as
     "fetch",
     async () => new Response("private upstream response", { status }),
   );
-  for (const provider of ["typesafe", "vercel"] as const) {
-    for (status of [401, 403, 429, 500]) {
+  const expected = {
+    typesafe: {
+      401: "Check your TypeSafe API key.",
+      402: "Try again later.",
+      403: "Check your TypeSafe API key.",
+    },
+    vercel: {
+      401: "Check your Gateway API key.",
+      402: "Try again later.",
+      403: "Check Gateway credits and model access.",
+    },
+    openrouter: {
+      401: "Check your OpenRouter API key.",
+      402: "Add OpenRouter credits.",
+      403: "Check OpenRouter key limits and Jev access.",
+    },
+  } as const;
+  for (const provider of ["typesafe", "vercel", "openrouter"] as const) {
+    for (status of [401, 402, 403, 429, 500]) {
       const advice =
         status === 429
           ? "Rate limited. Try again later."
           : status === 500
             ? "Try again later."
-            : provider === "typesafe"
-              ? "Check your TypeSafe API key."
-              : status === 401
-                ? "Check your Gateway API key."
-                : "Check Gateway credits and model access.";
+            : expected[provider][status as 401 | 402 | 403];
       await assert.rejects(evaluate(snapshot, "synthetic-test-key", provider), {
         message: `Jev request failed: HTTP ${status}. ${advice}`,
       });
@@ -150,9 +194,18 @@ test("smoke credentials support direct aliases and reject mixed provider familie
     provider: "vercel",
     key: "synthetic-test-key",
   });
+  assert.deepEqual(smokeCredentials({ OPENROUTER_API_KEY: " synthetic-test-key " }), {
+    provider: "openrouter",
+    key: "synthetic-test-key",
+  });
   assert.throws(
     () =>
       smokeCredentials({ JEV_KEY: "synthetic-test-key", AI_GATEWAY_API_KEY: "synthetic-test-key" }),
+    /Set only one/,
+  );
+  assert.throws(
+    () =>
+      smokeCredentials({ OPENROUTER_API_KEY: "synthetic-test-key", JEV_KEY: "synthetic-test-key" }),
     /Set only one/,
   );
   assert.throws(

@@ -4,6 +4,8 @@ import type { Provider } from "./providers";
 
 export const ENDPOINT = "https://ai-gateway.vercel.sh/v4/ai/evaluation-model";
 export const TYPESAFE_ENDPOINT = "https://api.typesafe.ai/v1/systemone";
+export const OPENROUTER_ENDPOINT = "https://openrouter.ai/api/alpha/decisions";
+export const OPENROUTER_MODEL = "~typesafe/jev-latest";
 const answerSchema = z.object({
   type: z.literal("choice"),
   choice: z.enum(categories),
@@ -73,28 +75,53 @@ export function evaluationCall(
   key: string,
   provider: Provider = "vercel",
 ): { url: string; init: RequestInit } {
-  const direct = provider === "typesafe";
   const request = evaluationRequest(snapshot);
-  return {
-    url: direct ? TYPESAFE_ENDPOINT : ENDPOINT,
-    init: {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${key}`,
-        "Content-Type": "application/json",
-        ...(direct
-          ? {}
-          : {
+  const auth = { Authorization: `Bearer ${key}`, "Content-Type": "application/json" };
+  const [url, headers, body] =
+    provider === "typesafe"
+      ? [TYPESAFE_ENDPOINT, auth, { ...request, model: "jev-latest" }]
+      : provider === "openrouter"
+        ? [
+            OPENROUTER_ENDPOINT,
+            { ...auth, "X-Title": "Unclutter" },
+            { ...request, model: OPENROUTER_MODEL },
+          ]
+        : [
+            ENDPOINT,
+            {
+              ...auth,
               "ai-gateway-protocol-version": "0.0.1",
               "ai-gateway-auth-method": "api-key",
               "ai-evaluation-model-specification-version": "4",
               "ai-model-id": "typesafe-ai/jev",
-            }),
-      },
-      body: JSON.stringify(direct ? { ...request, model: "jev-latest" } : request),
+            },
+            request,
+          ];
+  return {
+    url,
+    init: {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body),
       signal: AbortSignal.timeout(25_000),
     },
   };
+}
+
+function failureAdvice(provider: Provider, status: number): string {
+  if (status === 429) return "Rate limited. Try again later.";
+  if (provider === "typesafe" && (status === 401 || status === 403))
+    return "Check your TypeSafe API key.";
+  if (provider === "openrouter") {
+    if (status === 401) return "Check your OpenRouter API key.";
+    if (status === 402) return "Add OpenRouter credits.";
+    if (status === 403) return "Check OpenRouter key limits and Jev access.";
+  }
+  if (provider === "vercel") {
+    if (status === 401) return "Check your Gateway API key.";
+    if (status === 403) return "Check Gateway credits and model access.";
+  }
+  return "Try again later.";
 }
 
 export async function evaluate(
@@ -105,18 +132,9 @@ export async function evaluate(
   if (!snapshot.candidates.length) return [];
   const { url, init } = evaluationCall(snapshot, key, provider);
   const response = await fetch(url, init);
-  if (!response.ok) {
-    const advice =
-      provider === "typesafe" && (response.status === 401 || response.status === 403)
-        ? "Check your TypeSafe API key."
-        : response.status === 401
-          ? "Check your Gateway API key."
-          : response.status === 403
-            ? "Check Gateway credits and model access."
-            : response.status === 429
-              ? "Rate limited. Try again later."
-              : "Try again later.";
-    throw new Error(`Jev request failed: HTTP ${response.status}. ${advice}`);
-  }
+  if (!response.ok)
+    throw new Error(
+      `Jev request failed: HTTP ${response.status}. ${failureAdvice(provider, response.status)}`,
+    );
   return rulesFromAnswers(await response.json(), snapshot.candidates);
 }
