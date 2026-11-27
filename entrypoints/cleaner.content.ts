@@ -1,5 +1,5 @@
 import { browser } from "wxt/browser";
-import { collectCandidates, createCleaner } from "../lib/dom";
+import { collectCandidates, createCleaner, uncoveredConsent } from "../lib/dom";
 import { pageContext } from "../lib/page-context";
 import { ANALYSIS_VERSION, unwrap, type PageState, type Profile, type Reply } from "../lib/model";
 
@@ -52,6 +52,37 @@ export default defineContentScript({
           .catch(() => undefined);
       }, 1500);
     };
+    const consentRequested = new Set<string>();
+    let consentTimer: number | undefined;
+    // A banner that mounts after the template was saved is visible despite the rules. Ask once
+    // per page load; the background persists the attempt so it never repeats across loads.
+    const requestConsentRecheck = () => {
+      const key = state.context.key;
+      if (
+        !autoEnabled ||
+        !state.enabled ||
+        !state.profile?.enabled ||
+        state.profile.analysisVersion < ANALYSIS_VERSION ||
+        consentRequested.has(key) ||
+        consentTimer !== undefined ||
+        !uncoveredConsent(document)
+      )
+        return;
+      consentTimer = ctx.setTimeout(() => {
+        consentTimer = undefined;
+        if (
+          ctx.isInvalid ||
+          document.visibilityState !== "visible" ||
+          pageContext(document, location.href).key !== key ||
+          !uncoveredConsent(document)
+        )
+          return;
+        consentRequested.add(key);
+        void browser.runtime
+          .sendMessage({ type: "visit", context: state.context, reason: "consent" })
+          .catch(() => undefined);
+      }, 1500);
+    };
     const sync = async () => {
       const version = ++revision;
       const context = pageContext(document, location.href);
@@ -76,6 +107,7 @@ export default defineContentScript({
       // Update badge with actual match count, not count of stored selectors.
       await browser.runtime.sendMessage({ type: "sync", context, hiddenCount: state.hiddenCount });
       requestAuto();
+      requestConsentRecheck();
       return state;
     };
     const safelySync = () =>
@@ -98,6 +130,8 @@ export default defineContentScript({
     });
     ctx.addEventListener(window, "wxt:locationchange", () => {
       clearTimeout(autoTimer);
+      clearTimeout(consentTimer);
+      consentTimer = undefined;
       autoPendingKey = null;
       revision++;
       cleaner.restore();
@@ -131,6 +165,7 @@ export default defineContentScript({
       revision++;
       clearTimeout(timeout);
       clearTimeout(autoTimer);
+      clearTimeout(consentTimer);
       observer.disconnect();
       cleaner.restore();
       browser.runtime.onMessage.removeListener(listener);

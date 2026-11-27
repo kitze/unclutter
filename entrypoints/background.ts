@@ -7,6 +7,7 @@ import {
   POLICY_VERSION,
   ANALYSIS_VERSION,
   shouldAutoAnalyze,
+  shouldRecheckConsent,
   profileSchema,
   snapshotSchema,
   unwrap,
@@ -46,7 +47,11 @@ const pageMessage = z.discriminatedUnion("type", [
     context: contextSchema,
     hiddenCount: z.number().int().min(0).max(1200),
   }),
-  z.object({ type: z.literal("visit"), context: contextSchema }),
+  z.object({
+    type: z.literal("visit"),
+    context: contextSchema,
+    reason: z.enum(["new", "consent"]).default("new"),
+  }),
 ]);
 const profileKey = (key: string) => `profile:${key}`;
 
@@ -117,7 +122,7 @@ export default defineBackground(() => {
         .map((tab) => refresh(tab.id!).catch(() => undefined)),
     );
   };
-  const analyze = async (tabId: number, automatic = false) => {
+  const analyze = async (tabId: number, automatic = false, reason: "new" | "consent" = "new") => {
     const snapshot = snapshotSchema.parse(await send<Snapshot>(tabId, "snapshot"));
     const existing = jobs.get(snapshot.context.key);
     if (existing) {
@@ -125,12 +130,13 @@ export default defineBackground(() => {
       await refresh(tabId);
       return;
     }
-    const attemptKey = `auto:${snapshot.context.key}:a${ANALYSIS_VERSION}`;
+    const attemptKey = `${reason === "consent" ? "consent" : "auto"}:${snapshot.context.key}:a${ANALYSIS_VERSION}`;
     const task = (async () => {
       const config = await settings();
       const before = await profile(snapshot.context);
       const attempt = (await browser.storage.local.get(attemptKey))[attemptKey];
-      if (automatic && !shouldAutoAnalyze(config, before, !!attempt)) return;
+      const allowed = reason === "consent" ? shouldRecheckConsent : shouldAutoAnalyze;
+      if (automatic && !allowed(config, before, !!attempt)) return;
       if (!config.apiKey)
         throw new Error(`Add your ${providerKeyLabel(config.provider)} API key first.`);
       if (!config.enabled) throw new Error("Enable Unclutter before analyzing.");
@@ -163,7 +169,9 @@ export default defineBackground(() => {
         rules,
       };
       await browser.storage.local.set({ [profileKey(next.key)]: next });
-      await browser.storage.local.remove(attemptKey);
+      // A consent re-check stays recorded even on success, or a banner the model keeps
+      // would trigger it again on every load.
+      if (reason !== "consent") await browser.storage.local.remove(attemptKey);
     })();
     jobs.set(snapshot.context.key, task);
     try {
@@ -206,7 +214,7 @@ export default defineBackground(() => {
         )
           throw new Error("Invalid page context.");
         if (message.type === "visit") {
-          await analyze(sender.tab.id, true);
+          await analyze(sender.tab.id, true, message.reason);
           return null;
         }
         const config = await settings();
@@ -277,7 +285,11 @@ export default defineBackground(() => {
       const snapshot = snapshotSchema.parse(await send<Snapshot>(message.tabId, "snapshot"));
       const saved = await profile(snapshot.context);
       if (!saved) throw new Error("Analyze this page type first.");
-      if (message.type === "forget") await browser.storage.local.remove(profileKey(saved.key));
+      if (message.type === "forget")
+        await browser.storage.local.remove([
+          profileKey(saved.key),
+          `consent:${saved.key}:a${ANALYSIS_VERSION}`,
+        ]);
       else {
         if (message.type === "toggle") saved.enabled = message.enabled;
         if (message.type === "rule") {
